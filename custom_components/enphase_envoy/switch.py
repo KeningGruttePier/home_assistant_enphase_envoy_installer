@@ -11,6 +11,7 @@ from .const import (
     NAME,
     READER,
     SWITCHES,
+    DPEL_PENDING,
 )
 
 
@@ -23,10 +24,40 @@ async def async_setup_entry(
     coordinator = data[COORDINATOR]
     name = data[NAME]
     reader = data[READER]
+    # Shared with select.py: holds the mode chosen via the DPEL Mode select
+    # while DPEL is off, so turning the switch on can use it even though
+    # the Envoy itself has nothing to report for 'dpel_mode' while disabled.
+    dpel_pending = data.setdefault(DPEL_PENDING, {})
 
     entities = []
     for switch_description in SWITCHES:
-        if switch_description.key.startswith("storage_"):
+        if switch_description.key == "dpel_switch":
+            # 'dpel_enabled' is only a key in coordinator.data on metered-
+            # with-CT systems (structurally, regardless of whether its
+            # value has resolved yet), and DPEL additionally requires an
+            # installer token. Both are known right after the first
+            # coordinator refresh, so the switch is available from
+            # startup instead of only after DPEL has been
+            # configured/enabled at least once.
+            if (
+                "dpel_enabled" in coordinator.data
+                and reader.token_type == "installer"
+                and not reader.disable_installer_account_use
+            ):
+                entity_name = f"{name} {switch_description.name}"
+                entities.append(
+                    EnvoyDpelSwitchEntity(
+                        switch_description,
+                        entity_name,
+                        name,
+                        config_entry.unique_id,
+                        None,
+                        coordinator,
+                        reader,
+                        dpel_pending,
+                    )
+                )
+        elif switch_description.key.startswith("storage_"):
             if (
                 coordinator.data.get("batteries")
                 and coordinator.data.get(switch_description.key) is not None
@@ -123,6 +154,64 @@ class EnvoySwitchEntity(CoordinatorEntity, SwitchEntity):
         """Turn the entity off."""
         set_func = getattr(self.reader, f"set_{self.entity_description.key}")
         await set_func(False)
+        await self.coordinator.async_request_refresh()
+
+
+class EnvoyDpelSwitchEntity(EnvoySwitchEntity):
+    """Switch to enable/disable Dynamic Power Export Limit.
+
+    The Envoy only exposes the current enabled state, not a way to preview
+    a toggle result, so we mark this as an assumed-state switch and drive
+    it from the last-known coordinator values for immediate UI feedback.
+    """
+
+    def __init__(
+        self,
+        description,
+        name,
+        device_name,
+        device_serial_number,
+        serial_number,
+        coordinator,
+        reader,
+        pending,
+    ):
+        super().__init__(
+            description,
+            name,
+            device_name,
+            device_serial_number,
+            serial_number,
+            coordinator,
+            reader,
+        )
+        # Shared with the DPEL Mode select entity.
+        self._pending = pending
+
+    @property
+    def assumed_state(self) -> bool:
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        """Return the status of the requested attribute."""
+        return self.coordinator.data.get("dpel_enabled")
+
+    async def async_turn_on(self, **kwargs):
+        """Turn DPEL on, re-using the last-known limit/slew values and the
+        mode chosen on the DPEL Mode select (falling back to the Envoy's
+        last-known mode if nothing was ever selected while DPEL was off)."""
+        mode = self._pending.get("mode") or self.coordinator.data.get("dpel_mode")
+        await self.reader.enable_dpel(
+            watt=self.coordinator.data.get("dpel_limit") or 0,
+            slew=self.coordinator.data.get("dpel_slew_rate") or 100,
+            export_limit=mode == "Export",
+        )
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs):
+        """Turn DPEL off."""
+        await self.reader.disable_dpel()
         await self.coordinator.async_request_refresh()
 
 

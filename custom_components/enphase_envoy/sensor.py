@@ -18,6 +18,7 @@ from .const import (
     COORDINATOR,
     DOMAIN,
     NAME,
+    READER,
     SENSORS,
     PHASE_SENSORS,
     LIVE_UPDATEABLE_ENTITIES,
@@ -43,8 +44,21 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = data[COORDINATOR]
     name = data[NAME]
+    reader = data[READER]
     live_entities = data[LIVE_UPDATEABLE_ENTITIES]
     options = config_entry.options
+
+    # 'dpel_enabled' is only a key in coordinator.data on metered-with-CT
+    # systems (structurally, regardless of whether its value has resolved
+    # yet), and DPEL additionally requires an installer token. Both are
+    # known right after the first coordinator refresh, so entities can be
+    # registered from startup instead of only after DPEL has been
+    # configured/enabled at least once.
+    dpel_available = (
+        "dpel_enabled" in coordinator.data
+        and reader.token_type == "installer"
+        and not reader.disable_installer_account_use
+    )
 
     entities = []
     _LOGGER.debug("Setting up Sensors")
@@ -230,6 +244,20 @@ async def async_setup_entry(
 
         elif sensor_description.key.startswith("agg_batteries_"):
             if coordinator.data.get("batteries"):
+                entities.append(
+                    CoordinatedEnvoyEntity(
+                        description=sensor_description,
+                        name=f"{name} {sensor_description.name}",
+                        device_name=name,
+                        device_serial_number=config_entry.unique_id,
+                        serial_number=None,
+                        coordinator=coordinator,
+                        device_host=config_entry.data[CONF_HOST],
+                    )
+                )
+
+        elif sensor_description.key in ("dpel_limit", "dpel_mode"):
+            if dpel_available:
                 entities.append(
                     CoordinatedEnvoyEntity(
                         description=sensor_description,

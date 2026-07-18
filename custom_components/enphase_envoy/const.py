@@ -53,6 +53,7 @@ STORAGE_KEY = "envoy"
 STORAGE_VERSION = 1
 
 LIVE_UPDATEABLE_ENTITIES = "live-update-entities"
+DPEL_PENDING = "dpel_pending"
 ENABLE_ADDITIONAL_METRICS = "enable_additional_metrics"
 ADDITIONAL_METRICS = []
 
@@ -814,6 +815,13 @@ SWITCHES = (
         device_class=SwitchDeviceClass.SWITCH,
     ),
     SwitchEntityDescription(
+        key="dpel_switch",
+        name="Production DPEL",
+        # 'tower-import' icon means 'sending power to grid'
+        icon="mdi:transmission-tower-import",
+        device_class=SwitchDeviceClass.SWITCH,
+    ),
+    SwitchEntityDescription(
         key="storage_charge_from_grid",
         name="Batteries Charge From Grid",
         icon="mdi:power-plug-battery",
@@ -825,6 +833,14 @@ STORAGE_MODE_SELECT = SelectEntityDescription(
     key="storage_mode",
     name="Batteries Mode",
     icon="mdi:battery-sync",
+)
+
+DPEL_MODES = ["Production", "Export"]
+
+DPEL_MODE_SELECT = SelectEntityDescription(
+    key="dpel_mode_select",
+    name="Production DPEL Mode",
+    icon="mdi:transmission-tower-import",
 )
 
 STORAGE_RESERVE_SOC_NUMBER = NumberEntityDescription(
